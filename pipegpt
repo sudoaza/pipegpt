@@ -1,0 +1,121 @@
+#!/usr/bin/env python
+import os, sys
+import argparse
+import openai
+from os.path import exists, dirname, join as joinpath, islink
+from time import sleep
+
+openai.api_key = os.getenv('OPENAI_API_KEY')
+
+parser = argparse.ArgumentParser(
+  formatter_class=argparse.RawDescriptionHelpFormatter,
+  description="""Integrate ChatGPT into your command pipelines.""", 
+  epilog=f"""
+By default it just passes the input to chatGPT.
+
+    $ echo "The moons of Mars are called" | pipegpt
+    > Phobos and Deimos.
+
+You can pass inline prompts to prepend to the input.
+
+    cat words.txt | pipegpt "Which of these are fruits? One per line."
+    > Coconut
+    > Mandarin
+
+Or you can choose prompts from templates. Also present results as a unique list (-l).
+
+    cat passwords.txt | pipegpt -l password_suggest
+
+Add your own tasks.
+
+    echo "Tell me a joke about " > {joinpath( dirname(__file__), "tasks/joke_about.txt" )}
+    echo "chatbots" | pipegpt joke_about
+
+""")
+parser.add_argument('task', help='The task to execute. Known prompt to prepend to input.', nargs="?", default="")
+parser.add_argument('-l','--list', help='Results are an unsorted list, get alternatives.', action="store_true")
+parser.add_argument('-rl','--reply-len', help='Maximum reply length in characters. Prompt plus reply length are contrained to max length 4097.', type=int, default=512)
+parser.add_argument('-m','--model', help="ML Model to use 'text' (default) for 'text-davinci-003' or 'code' for 'code-davinci-002'.", default="text")
+
+args = parser.parse_args()
+
+if args.model == "text":
+  args.model = "text-davinci-003"
+
+if args.model == "code":
+  args.model = "code-davinci-002"
+
+def task_prompt(task):
+  if not task or task == "":
+    return ""
+  
+  default_path = joinpath( dirname(os.path.realpath(__file__)), "tasks", f"{task}.txt" )
+  if exists( default_path ):
+    task = open(default_path).read()
+
+  return task
+
+def generate_prompt(input, task):
+  task = task_prompt(task)
+  if "%INPUT%" in task:
+    task = task.replace("%INPUT%",input)
+  else:
+    task = task + input
+  return task
+
+
+MAXLEN = 4097
+REPLY_LEN = args.reply_len
+PROMPT_LEN = MAXLEN - REPLY_LEN
+def ask(msg):
+  if len(msg) > PROMPT_LEN:
+    print("Input is longer than supported max length, truncating to ", PROMPT_LEN, file=sys.stderr)
+    msg = msg[:PROMPT_LEN]
+
+  completion = openai.Completion.create(
+    engine=args.model,
+    temperature=0.7,
+    max_tokens=REPLY_LEN,
+    prompt=msg)
+
+  if args.list:
+    results = []
+    for choice in completion.choices:
+      results.extend( choice.text.split("\n") )
+    results = list(set(results))
+    return "\n".join(results)
+
+  return completion.choices[0].text
+
+MAX_BACKOFF = 15
+def try_ask(*args):
+  backoff = 3
+  err = None
+  while backoff < MAX_BACKOFF:
+    try:
+      return ask(*args)
+    except openai.error.ServiceUnavailableError as e:
+      print("Unavailable. Sleep", backoff, file=sys.stderr)
+      sleep(backoff)
+      backoff *= 2
+      err = e
+      pass
+  raise err
+
+def main():
+  message = sys.stdin.read()
+  task = args.task
+
+  if len(message) < 1 and len(task) < 1:
+    parser.error("No prompt or input was provided. Nothing to do.")
+    parser.print_help()
+    exit(0)
+
+  if type(message) == list:
+    message = "".join(message)
+
+  prompt = generate_prompt(message, task)
+  print(try_ask(prompt))
+
+if __name__ == '__main__':
+    main()

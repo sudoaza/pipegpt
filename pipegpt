@@ -85,7 +85,10 @@ def ask(msg):
     results = list(set(results))
     return "\n".join(results)
 
-  return completion.choices[0].text
+  ans = completion.choices[0].text
+  if ans[0] == "\n":
+    ans = ans[1:]
+  return ans
 
 MAX_BACKOFF = 15
 def try_ask(*args):

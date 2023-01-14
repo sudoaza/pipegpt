@@ -15,7 +15,7 @@ Input is limited and will be truncated to less than 4Kb.
 
 Usage:
 
-    pipegpt [-h] [-l] [-rl REPLY_LEN] [-m MODEL] [task]
+    pipegpt [-h] [-l] [-rl REPLY_LEN] [-m MODEL] [-n NUMBER] [-b] [task]
 
 Integrate ChatGPT into your command pipelines.
 
@@ -31,6 +31,10 @@ Options:
                           Maximum reply length in characters. Prompt plus reply length are contrained to max length 4097.
     -m MODEL, --model MODEL
                           ML Model to use 'text' (default) for 'text-davinci-003' or 'code' for 'code-davinci-002'.
+    -n NUMBER, --number NUMBER
+                          Minimum number of lines to return. Combine with
+                          -l/--list.
+    -b, --batch           Batch input longer than 4k and concat output.
 
 By default it just passes the input to chatGPT.
 

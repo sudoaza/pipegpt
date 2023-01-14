@@ -2,7 +2,7 @@
 import os, sys, re
 import argparse
 import openai
-from os.path import exists, dirname, join as joinpath, islink
+from os.path import exists, dirname, join as joinpath, realpath
 from time import sleep
 
 openai.api_key = os.getenv('OPENAI_API_KEY')
@@ -28,7 +28,7 @@ Or you can choose prompts from templates. Also present results as a unique list 
 
 Add your own tasks.
 
-    echo "Tell me a joke about " > {joinpath( dirname(os.path.realpath(__file__)), "tasks/joke_about.txt" )}
+    echo "Tell me a joke about " > {joinpath( dirname(realpath(__file__)), "tasks/joke_about.txt" )}
     echo "chatbots" | pipegpt joke_about
 """)
 parser.add_argument('task', help='The task to execute. Known prompt to prepend to input.', nargs="?", default="")
@@ -50,7 +50,7 @@ def task_prompt(task):
   if not task or task == "":
     return ""
   
-  default_path = joinpath( dirname(os.path.realpath(__file__)), "tasks", f"{task}.txt" )
+  default_path = joinpath( dirname(realpath(__file__)), "tasks", f"{task}.txt" )
   if exists( default_path ):
     task = open(default_path).read()
 
@@ -116,9 +116,15 @@ def ask(msg):
 
 def clean_list(s_list):
   s_list = re.sub(r"^$","",s_list)
+
   # It's a comma separated list as a sentence
-  if s_list.count("\n") < 2 and s_list.count(", ") > 2:
-    return re.sub(", ", "\n", s_list.rstrip()[:-1])
+  if re.match(r"([^,]+, ){2,}[^,]+\.",s_list):
+    return re.sub(", ", "\n", s_list.rstrip("\n .,"))
+
+  # It's a semicolon separated list as a sentence
+  if re.match(r"([^;]+; ){2,}[^;]+\.",s_list):
+    return re.sub("; ", "\n", s_list.rstrip("\n .,"))
+
   # Remove bullets
   return re.sub(r"([0-9]+\.|-) ","",s_list)
 

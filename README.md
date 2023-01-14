@@ -9,7 +9,7 @@ Integrate ChatGPT into your terminal pipelines.
 
 Output may look right but be totally wrong, use as one more source and not as unique source of truth, like wordlist extension.
 
-Input is limited and will be truncated to less than 4Kb. 
+Input is limited and will be truncated to less than 4Kb. See batch mode.
 
 ## Usage
 

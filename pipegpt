@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import os, sys
+import os, sys, re
 import argparse
 import openai
 from os.path import exists, dirname, join as joinpath, islink
@@ -28,14 +28,15 @@ Or you can choose prompts from templates. Also present results as a unique list 
 
 Add your own tasks.
 
-    echo "Tell me a joke about " > {joinpath( dirname(__file__), "tasks/joke_about.txt" )}
+    echo "Tell me a joke about " > {joinpath( dirname(os.path.realpath(__file__)), "tasks/joke_about.txt" )}
     echo "chatbots" | pipegpt joke_about
-
 """)
 parser.add_argument('task', help='The task to execute. Known prompt to prepend to input.', nargs="?", default="")
 parser.add_argument('-l','--list', help='Results are an unsorted list, get alternatives.', action="store_true")
 parser.add_argument('-rl','--reply-len', help='Maximum reply length in characters. Prompt plus reply length are contrained to max length 4097.', type=int, default=512)
 parser.add_argument('-m','--model', help="ML Model to use 'text' (default) for 'text-davinci-003' or 'code' for 'code-davinci-002'.", default="text")
+parser.add_argument('-n','--number', help="Minimum number of lines to return. Combine with -l/--list.", type=int, default=10)
+parser.add_argument('-b','--batch', help="Batch input longer than 4k and concat output.", action="store_true")
 
 args = parser.parse_args()
 
@@ -55,40 +56,71 @@ def task_prompt(task):
 
   return task
 
-def generate_prompt(input, task):
-  task = task_prompt(task)
+# List that drops duplicates
+class UniqList(list):
+  def __init__(self, glue="\n"):
+    self.glue = glue
+
+  def __str__(self):
+    return self.glue.join(self)
+
+  def extend(self, _list):
+    if type(_list) == str:
+      _list = _list.split(self.glue)
+    super().extend([el for el in _list if el not in self and el.strip() != ""])
+
+  def append(self, el):
+    if el not in self and el.strip() != "":
+      super().append(el)
+
+  def __setitem__(self, index, item):
+    if item not in self and item.strip() != "":
+      super().__setitem__(index, item)
+
+def run_task(task, input):
   if "%INPUT%" in task:
     task = task.replace("%INPUT%",input)
   else:
     task = task + input
-  return task
 
+  if len(task) > PROMPT_LEN:
+    print("Input",len(task),"is longer than supported max length ",PROMPT_LEN,", truncating to ", PROMPT_LEN, ". Consider using -b/--batch", file=sys.stderr)
+    task = task[:PROMPT_LEN]
 
-MAXLEN = 4097
-REPLY_LEN = args.reply_len
-PROMPT_LEN = MAXLEN - REPLY_LEN
-def ask(msg):
-  if len(msg) > PROMPT_LEN:
-    print("Input is longer than supported max length, truncating to ", PROMPT_LEN, file=sys.stderr)
-    msg = msg[:PROMPT_LEN]
+  return try_ask(task)
 
-  completion = openai.Completion.create(
+def complete(msg):
+  return openai.Completion.create(
     engine=args.model,
     temperature=0.7,
     max_tokens=REPLY_LEN,
     prompt=msg)
 
+def ask(msg):
   if args.list:
-    results = []
-    for choice in completion.choices:
-      results.extend( choice.text.split("\n") )
-    results = list(set(results))
-    return "\n".join(results)
+    results = UniqList()
+    for _ in range(min(100, args.number)):
+      completion = complete(msg)
 
-  ans = completion.choices[0].text
-  if ans[0] == "\n":
-    ans = ans[1:]
-  return ans
+      for choice in completion.choices:
+        results.extend( clean_list(choice.text) )
+
+      if len(results) > args.number:
+        break
+
+    return str(results)
+
+  else:
+    completion = complete(msg)
+    return completion.choices[0].text.lstrip()
+
+def clean_list(s_list):
+  s_list = re.sub(r"^$","",s_list)
+  # It's a comma separated list as a sentence
+  if s_list.count("\n") < 2 and s_list.count(", ") > 2:
+    return re.sub(", ", "\n", s_list.rstrip()[:-1])
+  # Remove bullets
+  return re.sub(r"([0-9]+\.|-) ","",s_list)
 
 MAX_BACKOFF = 15
 def try_ask(*args):
@@ -97,28 +129,55 @@ def try_ask(*args):
   while backoff < MAX_BACKOFF:
     try:
       return ask(*args)
-    except openai.error.ServiceUnavailableError as e:
+    except (openai.error.ServiceUnavailableError, openai.error.RateLimitError) as e:
       print("Unavailable. Sleep", backoff, file=sys.stderr)
       sleep(backoff)
       backoff *= 2
       err = e
-      pass
   raise err
+
+def get_whole_chunk(message, size):
+  # Size is fine, return whole
+  if len(message) <= size:
+    return message
+
+  # Cut by last new line or dot that fits size
+  cut_at = max( message.rfind("\n", 0, size), message.rfind(".", 0, size) )
+
+  # Dont waste more than half the size
+  if cut_at < size / 2:
+    return message[:size]
+
+  return message[:cut_at+1]
+
+def pipegpt(message, task):
+  INPUT_MAXLEN = PROMPT_LEN - len(task) + 7*int("%INPUT%" in task)
+
+  if len(message) > INPUT_MAXLEN and args.batch:
+    pending = message
+    response = ""
+    chunk = "nada"
+    while len(chunk) > 0 and len(pending) > 0:
+      chunk = get_whole_chunk(pending, INPUT_MAXLEN - 2)
+      pending = pending[len(chunk):]
+      response += "\n"*int(bool(len(response))) + run_task(task, chunk + "\n\n")
+    return response
+
+  return run_task(task, message)
+
+# This will be model dependant
+MAXLEN = 4097
+REPLY_LEN = args.reply_len
+PROMPT_LEN = MAXLEN - REPLY_LEN
 
 def main():
   message = sys.stdin.read()
-  task = args.task
-
-  if len(message) < 1 and len(task) < 1:
-    parser.error("No prompt or input was provided. Nothing to do.")
-    parser.print_help()
-    exit(0)
+  task = task_prompt(args.task)
 
   if type(message) == list:
     message = "".join(message)
 
-  prompt = generate_prompt(message, task)
-  print(try_ask(prompt))
+  print(pipegpt(message, task))
 
 if __name__ == '__main__':
-    main()
+  main()

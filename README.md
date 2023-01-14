@@ -7,12 +7,9 @@ Integrate ChatGPT into your terminal pipelines.
 
 **You are sending all input and prompts to OpenAI API! Any personal privacy, customer data privacy or intellectual property concerns should be taken into account BEFORE USING.**
 
-Output may look right but be totally wrong, use as one more source and not as unique source of truth.
+Output may look right but be totally wrong, use as one more source and not as unique source of truth, like wordlist extension.
 
-Input is limited and will be truncated to less than 4Kb. In those cases the first line of output could be the model trying to graciouslly end the truncated data by making it up.
-
-ChatGPT understands many languages, output language will be defined by the prompt and input language, which can be different.
-
+Input is limited and will be truncated to less than 4Kb. 
 
 ## Usage
 

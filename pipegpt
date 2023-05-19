@@ -1,11 +1,9 @@
 #!/usr/bin/env python
 import os, sys, re
 import argparse
-import openai
+from easy_openai import *
 from os.path import exists, dirname, join as joinpath, realpath
 from time import sleep
-
-openai.api_key = os.getenv('OPENAI_API_KEY')
 
 parser = argparse.ArgumentParser(
   formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -34,17 +32,17 @@ Add your own tasks.
 parser.add_argument('task', help='The task to execute. Known prompt to prepend to input.', nargs="?", default="")
 parser.add_argument('-l','--list', help='Results are an unsorted list, get alternatives.', action="store_true")
 parser.add_argument('-rl','--reply-len', help='Maximum reply length in characters. Prompt plus reply length are contrained to max length 4097.', type=int, default=512)
-parser.add_argument('-m','--model', help="ML Model to use 'text' (default) for 'text-davinci-003' or 'code' for 'code-davinci-002'.", default="text")
+parser.add_argument('-m','--model', help="Model to use '3' (default) for 'gpt-3.5-turbo' or '4' for 'gpt-4'.", default="3")
 parser.add_argument('-n','--number', help="Minimum number of lines to return. Combine with -l/--list.", type=int, default=10)
 parser.add_argument('-b','--batch', help="Batch input longer than 4k and concat output.", action="store_true")
 
 args = parser.parse_args()
 
-if args.model == "text":
-  args.model = "text-davinci-003"
+if args.model == "3":
+  args.model = "gpt-3.5-turbo"
 
-if args.model == "code":
-  args.model = "code-davinci-002"
+if args.model == "4":
+  args.model = "gpt-4"
 
 def task_prompt(task):
   if not task or task == "":
@@ -80,28 +78,19 @@ class UniqList(list):
 def run_task(task, input):
   if "%INPUT%" in task:
     task = task.replace("%INPUT%",input)
-  else:
-    task = task + input
+    input = ""
 
-  if len(task) > PROMPT_LEN:
+  if len(task + input) > PROMPT_LEN:
     print("Input",len(task),"is longer than supported max length ",PROMPT_LEN,", truncating to ", PROMPT_LEN, ". Consider using -b/--batch", file=sys.stderr)
     task = task[:PROMPT_LEN]
 
-  return try_ask(task)
+  return ask_chat(input, task)
 
-def complete(msg):
-  return openai.Completion.create(
-    engine=args.model,
-    temperature=0.7,
-    max_tokens=REPLY_LEN,
-    prompt=msg)
-
-def ask(msg):
+def ask_chat(input, task):
   if args.list:
     results = UniqList()
     for _ in range(min(100, args.number)):
-      completion = complete(msg)
-
+      _, completion = chat_complete(input, system=task)
       for choice in completion.choices:
         results.extend( clean_list(choice.text) )
 
@@ -111,8 +100,8 @@ def ask(msg):
     return str(results)
 
   else:
-    completion = complete(msg)
-    return completion.choices[0].text.lstrip()
+    _, completion = chat_complete(input, system=task)
+    return completion
 
 def clean_list(s_list):
   # It's a comma separated list as a sentence
